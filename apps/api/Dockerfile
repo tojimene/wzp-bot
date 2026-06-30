@@ -36,7 +36,7 @@ RUN pnpm --filter @wzp/shared build \
 
 # 4) Genera un paquete de despliegue autocontenido SOLO con prod deps en /app.
 #    Incluye dist/ (ya compilado) + node_modules podado.
-RUN pnpm --filter @wzp/api deploy --prod --ignore-scripts /app
+RUN pnpm --filter @wzp/api deploy --prod --legacy --ignore-scripts /app
 
 # ---- Runner: imagen final mínima -------------------------------------------
 FROM base AS runner
