@@ -4,7 +4,7 @@ packages:
 
 # No re-ejecutar `pnpm install` automáticamente antes de cada `pnpm run`.
 # En CI (Amplify/Docker) esa reinstalación puede fallar (EACCES) y es innecesaria.
-verifyDepsBeforeRun: false
+verifyDepsBeforeRun: "false"
 
 # Dependencias con BINARIOS PRECOMPILADOS (no requieren compilador): se permite
 # ejecutar su script de instalación con normalidad.
