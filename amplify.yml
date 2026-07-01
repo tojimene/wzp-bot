@@ -20,11 +20,12 @@ applications:
             - corepack prepare pnpm@11.9.0 --activate
             - cd ../.. && pnpm install --frozen-lockfile --ignore-scripts
         build:
-          # Usamos `pnpm exec` (no `pnpm run`) para evitar el chequeo
-          # verify-deps-before-run de pnpm 11, que relanza `pnpm install` y
-          # falla con EACCES en el entorno de build de Amplify.
+          # Ejecutamos los binarios directamente (sin `pnpm run`/`pnpm exec`)
+          # para evitar el chequeo verify-deps-before-run de pnpm 11, que relanza
+          # `pnpm install` y falla con EACCES en el entorno de build de Amplify.
           commands:
-            - cd ../.. && pnpm --filter @wzp/shared exec tsc -p tsconfig.json && pnpm --filter @wzp/web exec next build
+            - cd ../../packages/shared && node_modules/.bin/tsc -p tsconfig.json
+            - cd ../../apps/web && node_modules/.bin/next build
       artifacts:
         baseDirectory: .next
         files:
