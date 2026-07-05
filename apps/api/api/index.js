@@ -29,6 +29,13 @@ module.exports = async (req, res) => {
     console.error('Fallo al iniciar la API serverless:', err);
     res.statusCode = 500;
     res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ error: 'internal_server_error' }));
+    // Exponemos el mensaje para diagnóstico (típicamente "X is not defined" por
+    // una variable de entorno que falta). Los nombres de variables no son secretos.
+    res.end(
+      JSON.stringify({
+        error: 'startup_failed',
+        message: err && err.message ? String(err.message) : String(err),
+      }),
+    );
   }
 };
