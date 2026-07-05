@@ -1,6 +1,4 @@
-import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
-import { Queue } from 'bullmq';
 import { SupabaseService } from '../supabase/supabase.service';
 import { UnipileService } from '../unipile/unipile.service';
 import { OpenRouterService } from '../openrouter/openrouter.service';
@@ -10,14 +8,13 @@ import { SilencedContactsService } from '../setter/silenced-contacts.service';
 import { ConversationClassifierService } from '../setter/conversation-classifier.service';
 import { AppointmentDetectorService } from '../calendar/appointment-detector.service';
 import { TransportService } from './transport.service';
-import {
-  DEBOUNCE_MS,
-  INCOMING_QUEUE,
-  OUTGOING_QUEUE,
-  RESPOND_QUEUE,
-  type OutgoingJob,
-  type RespondJob,
-} from './queues';
+import { DEBOUNCE_MS, type OutgoingJob, type RespondJob } from './queues';
+
+/** Lock obsoleto: si una respuesta/envío quedó "en curso" más de esto, se reclama. */
+const LOCK_STALE_MS = 3 * 60 * 1000;
+/** Cuántas conversaciones/mensajes procesa cada tick del cron como máximo. */
+const RESPOND_BATCH = 8;
+const OUTBOX_BATCH = 15;
 
 type IncomingEvent = {
   accountId: string;
@@ -42,22 +39,16 @@ export class MessagingService {
     private readonly classifier: ConversationClassifierService,
     private readonly appointmentDetector: AppointmentDetectorService,
     private readonly transport: TransportService,
-    @InjectQueue(INCOMING_QUEUE) private readonly incomingQueue: Queue,
-    @InjectQueue(OUTGOING_QUEUE) private readonly outgoingQueue: Queue<OutgoingJob>,
-    @InjectQueue(RESPOND_QUEUE) private readonly respondQueue: Queue<RespondJob>,
   ) {}
 
   /**
-   * Encola el webhook entrante para procesarlo en segundo plano con reintentos
-   * (lo llama el controlador del webhook, que responde 200 al instante).
+   * Procesa el webhook entrante. En el modelo serverless (Vercel) no hay worker
+   * persistente: guardamos el mensaje aquí mismo (la función responde 200 tras
+   * ello) y dejamos la GENERACIÓN de la respuesta para el cron, que la envía
+   * cuando vence la ventana de debounce (`respond_after`).
    */
   async enqueueIncoming(payload: Record<string, unknown>) {
-    await this.incomingQueue.add('incoming', payload, {
-      attempts: 3,
-      backoff: { type: 'fixed', delay: 2000 },
-      removeOnComplete: true,
-      removeOnFail: 200,
-    });
+    await this.handleIncoming(payload);
   }
 
   /**
@@ -262,37 +253,117 @@ export class MessagingService {
 
   /**
    * Programa (o reprograma) la respuesta agrupada de una conversación. Cada
-   * mensaje nuevo del lead reinicia la ventana de debounce: así juntamos varios
-   * mensajes seguidos en UNA sola respuesta y nunca corremos dos a la vez.
+   * mensaje nuevo del lead empuja hacia adelante la ventana de debounce
+   * (`respond_after = now + DEBOUNCE_MS`): así juntamos varios mensajes seguidos
+   * en UNA sola respuesta. El cron recoge las conversaciones ya vencidas.
    */
   private async scheduleResponse(
     orgId: string,
     conversationId: string,
-    chatId: string,
-    provider: string,
+    _chatId: string,
+    _provider: string,
   ) {
-    // OJO: BullMQ NO permite ':' en los jobId personalizados ("Custom Id cannot
-    // contain :"). Usamos '-' o el job fallaría y el bot no respondería nunca.
-    const jobId = `respond-${conversationId}`;
-    // Quitamos el job pendiente anterior (si lo hay) para reiniciar el temporizador.
-    try {
-      const existing = await this.respondQueue.getJob(jobId);
-      if (existing) await existing.remove();
-    } catch {
-      // Si está en ejecución no se puede borrar: ese job abortará solo al detectar
-      // que ha llegado un mensaje más nuevo (watermark).
+    void orgId;
+    await this.supabase.admin
+      .from('conversations')
+      .update({ respond_after: new Date(Date.now() + DEBOUNCE_MS).toISOString() })
+      .eq('id', conversationId);
+  }
+
+  // ---------------------------------------------------------------------------
+  //  CRON: drena las conversaciones vencidas y el outbox proactivo.
+  //  Lo invoca /api/cron/tick (Vercel) y el scheduler local en desarrollo.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Procesa las conversaciones cuya ventana de debounce ya venció: para cada una
+   * genera y envía la respuesta. Devuelve cuántas trató.
+   */
+  async processDueResponses(limit = RESPOND_BATCH): Promise<number> {
+    const nowIso = new Date().toISOString();
+    const { data: due } = await this.supabase.admin
+      .from('conversations')
+      .select('id, organization_id, provider, unipile_chat_id, contact_external_id')
+      .lte('respond_after', nowIso)
+      .not('respond_after', 'is', null)
+      .eq('ai_enabled', true)
+      .eq('blocked', false)
+      .order('respond_after', { ascending: true })
+      .limit(limit);
+
+    if (!due || due.length === 0) return 0;
+
+    let handled = 0;
+    for (const conv of due) {
+      const chatId = (conv.unipile_chat_id ?? conv.contact_external_id) as string;
+      try {
+        await this.generateAndSend({
+          orgId: conv.organization_id as string,
+          conversationId: conv.id as string,
+          chatId,
+          provider: conv.provider as string,
+        });
+        handled++;
+      } catch (err) {
+        this.logger.error(`Error respondiendo conv ${conv.id}: ${String(err)}`);
+      }
     }
-    await this.respondQueue.add(
-      'respond',
-      { orgId, conversationId, chatId, provider },
-      {
-        jobId,
-        delay: DEBOUNCE_MS,
-        attempts: 1,
-        removeOnComplete: true,
-        removeOnFail: 100,
-      },
-    );
+    return handled;
+  }
+
+  /** Envía los mensajes proactivos del outbox que ya están vencidos. */
+  async processDueOutbox(limit = OUTBOX_BATCH): Promise<number> {
+    const nowIso = new Date().toISOString();
+    const staleIso = new Date(Date.now() - LOCK_STALE_MS).toISOString();
+    const { data: rows } = await this.supabase.admin
+      .from('outbox')
+      .select('id, organization_id, conversation_id, kind, transport, account_id, attendee_id, chat_id, content')
+      .is('sent_at', null)
+      .lte('send_after', nowIso)
+      .or(`locked_at.is.null,locked_at.lt.${staleIso}`)
+      .order('send_after', { ascending: true })
+      .limit(limit);
+
+    if (!rows || rows.length === 0) return 0;
+
+    let sent = 0;
+    for (const row of rows) {
+      // Lock atómico: solo procede quien logra marcar locked_at.
+      const { data: locked } = await this.supabase.admin
+        .from('outbox')
+        .update({ locked_at: nowIso, attempts: 1 })
+        .eq('id', row.id)
+        .is('sent_at', null)
+        .or(`locked_at.is.null,locked_at.lt.${staleIso}`)
+        .select('id')
+        .maybeSingle();
+      if (!locked) continue;
+
+      try {
+        await this.deliverOutgoing({
+          kind: (row.kind as 'proactive' | 'reply') ?? 'proactive',
+          orgId: row.organization_id as string,
+          conversationId: row.conversation_id as string,
+          transport: (row.transport as string) ?? undefined,
+          accountId: (row.account_id as string) ?? undefined,
+          attendeeId: (row.attendee_id as string) ?? undefined,
+          chatId: (row.chat_id as string) ?? undefined,
+          content: row.content as string,
+        });
+        await this.supabase.admin
+          .from('outbox')
+          .update({ sent_at: new Date().toISOString(), locked_at: null })
+          .eq('id', row.id);
+        sent++;
+      } catch (err) {
+        await this.supabase.admin
+          .from('outbox')
+          .update({ locked_at: null, last_error: String(err) })
+          .eq('id', row.id);
+        this.logger.error(`Error enviando outbox ${row.id}: ${String(err)}`);
+      }
+    }
+    return sent;
   }
 
   /**
@@ -407,16 +478,21 @@ export class MessagingService {
   async generateAndSend(job: RespondJob) {
     const { orgId, conversationId, chatId, provider } = job;
 
-    // Lock por conversación: garantiza que SOLO un worker responde a la vez a
-    // este chat. Evita respuestas duplicadas si por lo que sea se solapan dos
-    // jobs para la misma tanda de mensajes.
-    const redis = (await this.respondQueue.client) as unknown as {
-      set(key: string, val: string, mode: 'EX', ttl: number, nx: 'NX'): Promise<string | null>;
-      del(key: string): Promise<number>;
-    };
-    const lockKey = `respond:lock:${conversationId}`;
-    const acquired = await redis.set(lockKey, '1', 'EX', 120, 'NX');
-    if (!acquired) {
+    // Lock en BD por conversación: garantiza que SOLO un tick responde a la vez a
+    // este chat (evita duplicados si dos ticks del cron se solapan). Al mismo
+    // tiempo limpiamos `respond_after`: si llega un mensaje nuevo mientras
+    // respondemos, su scheduleResponse volverá a ponerlo y el próximo tick lo
+    // recogerá. El UPDATE condicional es atómico: solo un tick "gana" el lock.
+    const nowIso = new Date().toISOString();
+    const staleIso = new Date(Date.now() - LOCK_STALE_MS).toISOString();
+    const { data: locked } = await this.supabase.admin
+      .from('conversations')
+      .update({ responding_lock_at: nowIso, respond_after: null })
+      .eq('id', conversationId)
+      .or(`responding_lock_at.is.null,responding_lock_at.lt.${staleIso}`)
+      .select('id')
+      .maybeSingle();
+    if (!locked) {
       this.logger.log(`Respuesta en curso para ${conversationId}; se omite duplicado`);
       return;
     }
@@ -424,7 +500,14 @@ export class MessagingService {
     try {
       await this.generateAndSendLocked(job, orgId, conversationId, chatId, provider);
     } finally {
-      await redis.del(lockKey).catch(() => undefined);
+      try {
+        await this.supabase.admin
+          .from('conversations')
+          .update({ responding_lock_at: null })
+          .eq('id', conversationId);
+      } catch {
+        // el lock caduca solo (LOCK_STALE_MS) si no se pudo liberar
+      }
     }
   }
 
@@ -587,33 +670,39 @@ export class MessagingService {
   }): Promise<{ delayMs: number }> {
     const cfg = await this.setterConfig.getOrCreate(params.orgId);
     const spacingMs = randomSeconds(40, 100) * 1000;
-
-    const client = await this.outgoingQueue.client;
-    const key = `proactive:nextslot:${params.orgId}`;
     const now = Date.now();
 
-    // Reservamos un "hueco" por organización para no enviar todo de golpe.
-    const stored = Number((await client.get(key)) ?? 0);
-    let slot = Math.max(stored, now);
-    slot = nextActiveSlot(slot, cfg.active_hours_enabled, cfg.active_hours_start, cfg.active_hours_end);
-    // Guardamos el próximo hueco libre (timestamp). Se auto-acota con Math.max.
-    await client.set(key, String(slot + spacingMs));
+    // El "próximo hueco" se calcula a partir del último proactivo PENDIENTE de la
+    // org en el outbox: así los envíos quedan espaciados en el tiempo (jitter) y
+    // no salen todos de golpe (protege el número de WhatsApp).
+    const { data: lastPending } = await this.supabase.admin
+      .from('outbox')
+      .select('send_after')
+      .eq('organization_id', params.orgId)
+      .eq('kind', 'proactive')
+      .is('sent_at', null)
+      .order('send_after', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    const delay = Math.max(0, slot - now);
-    await this.outgoingQueue.add(
-      'send',
-      {
-        kind: 'proactive',
-        orgId: params.orgId,
-        conversationId: params.conversationId,
-        accountId: params.accountId,
-        attendeeId: params.attendeeId,
-        content: params.content,
-        transport: params.transport,
-      },
-      { delay, attempts: 3, backoff: { type: 'fixed', delay: 5000 }, removeOnComplete: true, removeOnFail: 200 },
-    );
-    return { delayMs: delay };
+    let slot = lastPending?.send_after
+      ? new Date(lastPending.send_after as string).getTime() + spacingMs
+      : now;
+    if (slot < now) slot = now;
+    slot = nextActiveSlot(slot, cfg.active_hours_enabled, cfg.active_hours_start, cfg.active_hours_end);
+
+    await this.supabase.admin.from('outbox').insert({
+      organization_id: params.orgId,
+      conversation_id: params.conversationId,
+      kind: 'proactive',
+      transport: params.transport ?? null,
+      account_id: params.accountId,
+      attendee_id: params.attendeeId,
+      content: params.content,
+      send_after: new Date(slot).toISOString(),
+    });
+
+    return { delayMs: Math.max(0, slot - now) };
   }
 
   private async deliverProactive(job: OutgoingJob) {

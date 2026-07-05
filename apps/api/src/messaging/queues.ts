@@ -1,11 +1,14 @@
-export const INCOMING_QUEUE = 'incoming-messages';
-export const OUTGOING_QUEUE = 'outgoing-messages';
-export const RESPOND_QUEUE = 'respond-debounced';
+/**
+ * Tipos del procesamiento asíncrono de mensajería. Ya no usamos BullMQ/Redis:
+ * el debounce vive en `conversations.respond_after` y los envíos proactivos en
+ * la tabla `outbox`; un cron los drena. Estos tipos siguen describiendo el
+ * "trabajo" que se procesa en cada caso.
+ */
 
 /** Ventana de agrupado: espera tras el último mensaje del lead antes de responder. */
 export const DEBOUNCE_MS = 12_000;
 
-/** Job de respuesta agrupada (uno por conversación, con jobId = respond-<convId>). */
+/** Datos para generar la respuesta agrupada de una conversación. */
 export type RespondJob = {
   orgId: string;
   conversationId: string;
@@ -13,6 +16,7 @@ export type RespondJob = {
   provider: string;
 };
 
+/** Datos de un envío del outbox (primer contacto proactivo o respuesta directa). */
 export type OutgoingJob = {
   orgId: string;
   conversationId: string;

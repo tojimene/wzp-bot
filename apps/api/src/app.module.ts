@@ -7,6 +7,7 @@ import { AdminModule } from './admin/admin.module';
 import { AuthModule } from './auth/auth.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { ChannelsModule } from './channels/channels.module';
+import { CronModule } from './cron/cron.module';
 import { HealthController } from './health/health.controller';
 import { TeamModule } from './team/team.module';
 import { InboxModule } from './inbox/inbox.module';
@@ -45,6 +46,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     SetterModule,
     PlaygroundModule,
     MessagingModule,
+    CronModule,
     InboxModule,
     LeadsModule,
     IntegrationsModule,

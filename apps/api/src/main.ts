@@ -7,7 +7,13 @@ import { json, urlencoded } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 
-async function bootstrap() {
+/**
+ * Crea y CONFIGURA la app Nest (middleware, prefijo, CORS, validación) sin
+ * escuchar en un puerto. La reutilizan tanto `bootstrap()` (local / hosts con
+ * proceso persistente) como el entry serverless de Vercel (`api/index.js`), que
+ * llama a `app.init()` y usa la instancia Express como handler.
+ */
+export async function createNestApp() {
   // Gestionamos el parseo del body nosotros (ver más abajo el caso webhooks).
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   const config = app.get(ConfigService);
@@ -66,6 +72,14 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  return app;
+}
+
+/** Arranca la API como servidor con proceso persistente (local / Render / etc.). */
+async function bootstrap() {
+  const app = await createNestApp();
+  const config = app.get(ConfigService);
 
   // Cierre limpio: al reiniciar el watcher, liberamos el puerto de inmediato.
   app.enableShutdownHooks();
@@ -133,4 +147,9 @@ function freePort(port: number) {
   }
 }
 
-void bootstrap();
+// Solo arrancamos el servidor cuando este archivo es el punto de entrada
+// (local / `node dist/main` en Render). En Vercel se importa `createNestApp`
+// desde el handler serverless, que NO debe abrir un puerto.
+if (require.main === module) {
+  void bootstrap();
+}

@@ -60,8 +60,9 @@ export class WebhooksController {
   }
 
   /**
-   * Webhook de mensajería (mensajes nuevos). Respondemos 200 al instante y
-   * procesamos en segundo plano (la IA puede tardar y aplicar retardos humanos).
+   * Webhook de mensajería (mensajes nuevos). Guardamos el mensaje al vuelo y
+   * respondemos 200; la GENERACIÓN de la respuesta IA (con retardos humanos) la
+   * hace el cron cuando vence la ventana de debounce, para no bloquear el webhook.
    */
   @Post('messaging')
   @HttpCode(200)
@@ -77,8 +78,8 @@ export class WebhooksController {
     }
 
     this.logger.log(`Mensaje entrante (account ${String(body.account_id)})`);
-    // Lo encolamos en Redis: la sincronización + respuesta IA corre en el worker
-    // con reintentos. Respondemos 200 al instante.
+    // Guardamos el mensaje y programamos la respuesta (respond_after). El cron
+    // la generará y enviará al vencer el debounce. Respondemos 200 al instante.
     await this.messaging.enqueueIncoming(body);
     return { ok: true };
   }
