@@ -67,6 +67,7 @@ const SOURCE_LABEL: Record<string, string> = {
   ig_comment: "Comentario IG",
   ig_dm: "DM Instagram",
   ctwa: "Click-to-WhatsApp",
+  webhook: "Webhook",
   manual: "Manual",
   organic: "Orgánico",
 };
@@ -205,7 +206,7 @@ export default function Crm() {
                 <th>Fuente</th>
                 <th>Campaña</th>
                 <th>Estado</th>
-                <th>Entró</th>
+                <th>Fecha de creación</th>
               </tr>
             </thead>
             <tbody>
@@ -340,7 +341,7 @@ function LeadDrawer({
               <Field label="Campaña" value={lead.campaign} />
               <Field label="ID externo" value={lead.external_id} />
               <Field label="Opt-in" value={lead.consent_optin ? "Sí" : "No"} />
-              <Field label="Entró" value={fmtDate(lead.created_at)} />
+              <Field label="Fecha de creación" value={fmtDate(lead.created_at)} />
             </section>
 
             {lead.first_message && (

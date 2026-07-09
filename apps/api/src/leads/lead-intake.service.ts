@@ -306,15 +306,20 @@ function buildLeadContext(input: IntakeInput): string | null {
   if (input.campaign) lines.push(`Campaña: ${input.campaign}`);
   if (input.message) lines.push(`Primer mensaje / comentario: ${input.message}`);
 
-  // Campos de control que NO son respuestas del formulario.
+  // Campos de control/estructura que NO son respuestas del formulario (y que, si
+  // se volcaran, ensuciarían el contexto del bot con JSON gigante o metadatos).
   const CONTROL = new Set([
     'token',
     'name',
     'full_name',
+    'fullname',
     'first_name',
+    'firstname',
     'last_name',
+    'lastname',
     'phone',
     'phone_number',
+    'phonenumber',
     'email',
     'channel',
     'source',
@@ -326,8 +331,19 @@ function buildLeadContext(input: IntakeInput): string | null {
     'ad_id',
     'message',
     'external_id',
+    'subscriber_id',
     'proactive',
     'raw',
+    // Estructura/metadatos típicos de GoHighLevel:
+    'customdata',
+    'contact',
+    'location',
+    'workflow',
+    'triggerdata',
+    'contact_id',
+    'contact_type',
+    'date_created',
+    'tags',
   ]);
 
   const raw = input.raw ?? {};
