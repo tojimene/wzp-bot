@@ -29,6 +29,10 @@ type Mode = "setter" | "support" | "ignored" | "unclassified";
 
 type Member = { user_id: string; email: string | null; full_name: string | null; role: string };
 
+type ConvTag = { tag_id: string; name: string; color: string; source: string };
+
+type TagDef = { id: string; name: string; color: string; ai_enabled: boolean };
+
 type Conversation = {
   id: string;
   provider: string | null;
@@ -43,6 +47,7 @@ type Conversation = {
   unread_count: number;
   ai_analysis?: Analysis | null;
   ai_analysis_at?: string | null;
+  tags?: ConvTag[];
   last_message_at: string | null;
   created_at: string;
 };
@@ -152,6 +157,9 @@ export default function Inbox() {
   const [notesDraft, setNotesDraft] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
+  const [tagDefs, setTagDefs] = useState<TagDef[]>([]);
+  const [tagMenuOpen, setTagMenuOpen] = useState(false);
+  const [tagBusy, setTagBusy] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // ¿El usuario está pegado al fondo? Solo autoscrolleamos si es así (o al abrir
@@ -201,6 +209,9 @@ export default function Inbox() {
     apiFetch<Member[]>("/api/inbox/members")
       .then(setMembers)
       .catch(() => setMembers([]));
+    apiFetch<TagDef[]>("/api/tags")
+      .then(setTagDefs)
+      .catch(() => setTagDefs([]));
   }, []);
 
   useEffect(() => {
@@ -227,7 +238,42 @@ export default function Inbox() {
     atBottomRef.current = true;
     setSelectedId(id);
     setNotesOpen(false);
+    setTagMenuOpen(false);
     setError(null);
+  }
+
+  async function addTag(tagId: string) {
+    if (!conv) return;
+    setTagBusy(true);
+    try {
+      const tags = await apiFetch<ConvTag[]>(`/api/tags/conversations/${conv.id}`, {
+        method: "POST",
+        body: JSON.stringify({ tagId }),
+      });
+      setConv({ ...conv, tags });
+      loadList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setTagBusy(false);
+    }
+  }
+
+  async function removeTag(tagId: string) {
+    if (!conv) return;
+    setTagBusy(true);
+    try {
+      const tags = await apiFetch<ConvTag[]>(
+        `/api/tags/conversations/${conv.id}/${tagId}`,
+        { method: "DELETE" },
+      );
+      setConv({ ...conv, tags });
+      loadList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setTagBusy(false);
+    }
   }
 
   async function patch(body: Record<string, unknown>) {
@@ -423,6 +469,19 @@ export default function Inbox() {
                       !c.ai_enabled && <span className={styles.paused}>IA en pausa</span>
                     )}
                   </div>
+                  {c.tags && c.tags.length > 0 && (
+                    <div className={styles.convTags}>
+                      {c.tags.slice(0, 4).map((t) => (
+                        <span
+                          key={t.tag_id}
+                          className={styles.convTagChip}
+                          style={{ borderColor: t.color, color: t.color }}
+                        >
+                          {t.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </button>
             ))
@@ -503,9 +562,38 @@ export default function Inbox() {
                   </option>
                 ))}
               </select>
-              <button className={styles.toolBtn} disabled title="Próximamente">
-                Etiquetas
-              </button>
+              <div className={styles.tagWrap}>
+                <button
+                  className={`${styles.toolBtn} ${tagMenuOpen ? styles.toolBtnActive : ""}`}
+                  onClick={() => setTagMenuOpen((v) => !v)}
+                >
+                  Etiquetas{conv.tags && conv.tags.length > 0 ? ` (${conv.tags.length})` : ""}
+                </button>
+                {tagMenuOpen && (
+                  <div className={styles.tagMenu}>
+                    {tagDefs.length === 0 && (
+                      <div className={styles.tagMenuEmpty}>
+                        No hay etiquetas. Créalas en “Etiquetas”.
+                      </div>
+                    )}
+                    {tagDefs.map((def) => {
+                      const active = (conv.tags ?? []).some((t) => t.tag_id === def.id);
+                      return (
+                        <button
+                          key={def.id}
+                          className={styles.tagMenuItem}
+                          disabled={tagBusy}
+                          onClick={() => (active ? removeTag(def.id) : addTag(def.id))}
+                        >
+                          <span className={styles.tagDot} style={{ background: def.color }} />
+                          <span className={styles.tagMenuName}>{def.name}</span>
+                          {active && <span className={styles.tagCheck}>✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
               <button className={styles.toolBtn} onClick={() => setNotesOpen((v) => !v)}>
                 Nota{conv.notes ? " ●" : ""}
               </button>
@@ -525,6 +613,30 @@ export default function Inbox() {
                 Programar mensaje
               </button>
             </div>
+
+            {conv.tags && conv.tags.length > 0 && (
+              <div className={styles.tagPills}>
+                {conv.tags.map((t) => (
+                  <span
+                    key={t.tag_id}
+                    className={styles.tagPill}
+                    style={{ borderColor: t.color, color: t.color }}
+                    title={t.source === "ai" ? "Etiqueta puesta por la IA" : "Etiqueta manual"}
+                  >
+                    <span className={styles.tagDot} style={{ background: t.color }} />
+                    {t.name}
+                    <button
+                      className={styles.tagPillX}
+                      onClick={() => removeTag(t.tag_id)}
+                      disabled={tagBusy}
+                      title="Quitar (la IA no la volverá a poner)"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
 
             {notesOpen && (
               <div className={styles.notesBox}>

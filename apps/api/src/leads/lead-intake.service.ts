@@ -3,6 +3,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { SetterConfigService } from '../setter/setter-config.service';
 import { MessagingService } from '../messaging/messaging.service';
 import { GhlService } from '../ghl/ghl.service';
+import { WorkflowEngineService } from '../workflows/workflow-engine.service';
 import { LeadsService } from './leads.service';
 
 export type IntakeInput = {
@@ -46,6 +47,7 @@ export class LeadIntakeService {
     private readonly messaging: MessagingService,
     private readonly leads: LeadsService,
     private readonly ghl: GhlService,
+    private readonly workflow: WorkflowEngineService,
   ) {}
 
   /** Resuelve la organización a partir del token de intake. */
@@ -185,6 +187,18 @@ export class LeadIntakeService {
         leadId,
         proactiveSent: false,
         reason: 'proactivo solo en WhatsApp',
+      };
+    }
+
+    // Si hay un workflow "Lead entra" ACTIVO, es la fuente de verdad del primer
+    // mensaje + seguimientos. Sustituye a la plantilla proactiva simple.
+    const startedWorkflow = await this.workflow.startForConversation(orgId, conv.id, 'lead_created');
+    if (startedWorkflow) {
+      return {
+        conversationId: conv.id,
+        leadId,
+        proactiveSent: true,
+        reason: 'workflow "Lead entra" iniciado',
       };
     }
 

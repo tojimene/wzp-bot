@@ -8,6 +8,7 @@ import { SilencedContactsService } from '../setter/silenced-contacts.service';
 import { ConversationClassifierService } from '../setter/conversation-classifier.service';
 import { AppointmentDetectorService } from '../calendar/appointment-detector.service';
 import { TransportService } from './transport.service';
+import { TagClassifierService } from '../tags/tag-classifier.service';
 import { DEBOUNCE_MS, type OutgoingJob, type RespondJob } from './queues';
 
 /** Lock obsoleto: si una respuesta/envío quedó "en curso" más de esto, se reclama. */
@@ -39,6 +40,7 @@ export class MessagingService {
     private readonly classifier: ConversationClassifierService,
     private readonly appointmentDetector: AppointmentDetectorService,
     private readonly transport: TransportService,
+    private readonly tagClassifier: TagClassifierService,
   ) {}
 
   /**
@@ -121,6 +123,10 @@ export class MessagingService {
       await this.pauseWorkflowRuns(conv.id);
 
       await this.scheduleResponse(orgId, conv.id, evt.chatId, channel.provider as string);
+
+      // Si la IA está desactivada (chat llevado por una persona), etiquetamos
+      // aquí; si está activa, lo hará el hook tras la respuesta del bot.
+      if (!conv.ai_enabled) void this.tagClassifier.maybeTag(orgId, conv.id as string);
     } catch (err) {
       this.logger.error(`Error procesando mensaje entrante: ${String(err)}`);
     }
@@ -643,6 +649,9 @@ export class MessagingService {
     // Tras responder, el bot comprueba si el lead ha agendado/confirmado una
     // llamada y, si es así, etiqueta la conversación como `call_scheduled`.
     void this.appointmentDetector.maybeDetect(orgId, conversationId);
+    // Auto-etiquetado IA: analiza la conversación y aplica las etiquetas que
+    // correspondan según sus criterios (respeta lo manual).
+    void this.tagClassifier.maybeTag(orgId, conversationId);
   }
 
   /** ¿Ha entrado un mensaje del contacto más nuevo que la marca de agua? */

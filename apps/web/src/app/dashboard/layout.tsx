@@ -82,6 +82,7 @@ export default async function DashboardLayout({
       items: [
         { label: "CRM", href: "/dashboard/crm" },
         { label: "Chats", href: "/dashboard/inbox" },
+        { label: "Workflows", href: "/dashboard/workflows" },
         { label: "Probar IA", href: "/dashboard/playground" },
         { label: "Mi Setter", href: "/dashboard/setter" },
         { label: "Calendarios", href: "/dashboard/calendar" },
@@ -90,7 +91,7 @@ export default async function DashboardLayout({
     {
       label: "Gestión",
       items: [
-        { label: "Etiquetas" },
+        { label: "Etiquetas", href: "/dashboard/tags" },
         ...(role === "admin"
           ? [{ label: "Equipo", href: "/dashboard/team" }]
           : [{ label: "Equipo" }]),

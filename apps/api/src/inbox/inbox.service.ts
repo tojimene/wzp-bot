@@ -8,6 +8,7 @@ import {
 } from '../unipile/unipile.service';
 import { MessagingService } from '../messaging/messaging.service';
 import { ConversionsApiService } from '../whatsapp-cloud/conversions-api.service';
+import { TagsService } from '../tags/tags.service';
 
 type FunnelStage =
   | 'new'
@@ -30,6 +31,7 @@ export class InboxService {
     private readonly unipile: UnipileService,
     private readonly messaging: MessagingService,
     private readonly capi: ConversionsApiService,
+    private readonly tags: TagsService,
   ) {}
 
   async list(orgId: string, stage?: string, archived = false) {
@@ -50,7 +52,43 @@ export class InboxService {
 
     const { data, error } = await query;
     if (error) throw error;
-    return data ?? [];
+    const convs = data ?? [];
+    if (convs.length === 0) return convs;
+
+    // Adjuntamos las etiquetas de cada conversación en 2 consultas (evita N+1).
+    const ids = convs.map((c) => c.id as string);
+    const { data: applied } = await this.supabase.admin
+      .from('conversation_tags')
+      .select('conversation_id, tag_id, source')
+      .eq('organization_id', orgId)
+      .in('conversation_id', ids);
+    const rows = applied ?? [];
+    if (rows.length === 0) {
+      return convs.map((c) => ({ ...c, tags: [] }));
+    }
+
+    const tagIds = [...new Set(rows.map((r) => r.tag_id as string))];
+    const { data: defs } = await this.supabase.admin
+      .from('tag_definitions')
+      .select('id, name, color')
+      .in('id', tagIds);
+    const byId = new Map((defs ?? []).map((d) => [d.id as string, d]));
+
+    const byConv = new Map<string, Array<{ tag_id: string; name: string; color: string; source: string }>>();
+    for (const r of rows) {
+      const def = byId.get(r.tag_id as string);
+      if (!def) continue;
+      const arr = byConv.get(r.conversation_id as string) ?? [];
+      arr.push({
+        tag_id: r.tag_id as string,
+        name: def.name as string,
+        color: def.color as string,
+        source: (r.source as string) ?? 'ai',
+      });
+      byConv.set(r.conversation_id as string, arr);
+    }
+
+    return convs.map((c) => ({ ...c, tags: byConv.get(c.id as string) ?? [] }));
   }
 
   async get(orgId: string, id: string) {
@@ -99,7 +137,9 @@ export class InboxService {
         .eq('id', id);
     }
 
-    return { conversation: { ...conv, unread_count: 0 }, messages: messages ?? [] };
+    const tags = await this.tags.tagsForConversation(orgId, id);
+
+    return { conversation: { ...conv, unread_count: 0, tags }, messages: messages ?? [] };
   }
 
   async update(

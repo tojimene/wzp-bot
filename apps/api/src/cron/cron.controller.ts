@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { SkipThrottle } from '@nestjs/throttler';
 import { CryptoService } from '../common/crypto.service';
 import { MessagingService } from '../messaging/messaging.service';
+import { WorkflowEngineService } from '../workflows/workflow-engine.service';
 
 /**
  * Cron de procesamiento asíncrono. En Vercel se configura en `vercel.json`
@@ -29,6 +30,7 @@ export class CronController {
     private readonly config: ConfigService,
     private readonly crypto: CryptoService,
     private readonly messaging: MessagingService,
+    private readonly workflows: WorkflowEngineService,
   ) {}
 
   @Get('tick')
@@ -58,13 +60,18 @@ export class CronController {
       throw new ForbiddenException('Secreto de cron inválido');
     }
 
+    // Los workflows corren PRIMERO: pueden encolar mensajes al outbox, que se
+    // drena en la misma pasada.
+    const workflows = await this.workflows.processDueRuns();
     const [responses, proactive] = await Promise.all([
       this.messaging.processDueResponses(),
       this.messaging.processDueOutbox(),
     ]);
-    if (responses || proactive) {
-      this.logger.log(`Cron tick: ${responses} respuestas, ${proactive} proactivos`);
+    if (responses || proactive || workflows) {
+      this.logger.log(
+        `Cron tick: ${responses} respuestas, ${proactive} proactivos, ${workflows} workflows`,
+      );
     }
-    return { ok: true, responses, proactive };
+    return { ok: true, responses, proactive, workflows };
   }
 }

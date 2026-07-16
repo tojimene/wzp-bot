@@ -20,9 +20,11 @@ import { PlatformModule } from './platform/platform.module';
 import { PlaygroundModule } from './playground/playground.module';
 import { SetterModule } from './setter/setter.module';
 import { SupabaseModule } from './supabase/supabase.module';
+import { TagsModule } from './tags/tags.module';
 import { UnipileModule } from './unipile/unipile.module';
 import { WhatsAppCloudModule } from './whatsapp-cloud/whatsapp-cloud.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { WorkflowsModule } from './workflows/workflows.module';
 
 @Module({
   imports: [
@@ -47,6 +49,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ChannelsModule,
     CalendarModule,
     SetterModule,
+    TagsModule,
     PlaygroundModule,
     MessagingModule,
     CronModule,
@@ -55,6 +58,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     IntegrationsModule,
     GhlModule,
     WebhooksModule,
+    WorkflowsModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

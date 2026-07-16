@@ -685,3 +685,115 @@
     height: auto;
   }
 }
+
+/* --- Etiquetas --- */
+.tagWrap {
+  position: relative;
+  display: inline-block;
+}
+.tagMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-2, #141414);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tagMenuEmpty {
+  font-size: 12px;
+  color: var(--text-muted, #9a9a9a);
+  padding: 8px 10px;
+}
+.tagMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  padding: 7px 9px;
+  color: var(--text, #e8e8e8);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.tagMenuItem:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+.tagMenuItem:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tagMenuName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tagCheck {
+  color: #4ade80;
+  font-weight: 700;
+}
+.tagDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: none;
+}
+.tagPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px 0;
+}
+.tagPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  background: rgba(255, 255, 255, 0.03);
+}
+.tagPillX {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+  opacity: 0.7;
+}
+.tagPillX:hover:not(:disabled) {
+  opacity: 1;
+}
+.convTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.convTagChip {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid;
+  background: rgba(255, 255, 255, 0.02);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

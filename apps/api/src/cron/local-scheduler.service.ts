@@ -5,6 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { MessagingService } from '../messaging/messaging.service';
+import { WorkflowEngineService } from '../workflows/workflow-engine.service';
 
 /** Cada cuánto revisa el scheduler local (ms). En prod lo hace el cron de Vercel. */
 const TICK_MS = 8_000;
@@ -24,7 +25,10 @@ export class LocalSchedulerService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
-  constructor(private readonly messaging: MessagingService) {}
+  constructor(
+    private readonly messaging: MessagingService,
+    private readonly workflows: WorkflowEngineService,
+  ) {}
 
   onModuleInit() {
     const onVercel = Boolean(process.env.VERCEL);
@@ -46,6 +50,7 @@ export class LocalSchedulerService implements OnModuleInit, OnModuleDestroy {
     if (this.running) return; // evita solapes si un tick tarda más que el intervalo
     this.running = true;
     try {
+      await this.workflows.processDueRuns();
       await Promise.all([
         this.messaging.processDueResponses(),
         this.messaging.processDueOutbox(),
