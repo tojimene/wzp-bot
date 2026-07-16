@@ -54,6 +54,16 @@ type Message = {
   created_at: string;
 };
 
+/** ¿Dos listas de mensajes son equivalentes? (para evitar renders/scroll inútiles) */
+function sameMessages(a: Message[], b: Message[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id || a[i].content !== b[i].content) return false;
+  }
+  return true;
+}
+
 const STAGES: { id: Stage; label: string }[] = [
   { id: "new", label: "Nuevo" },
   { id: "qualifying", label: "Cualificando" },
@@ -144,6 +154,17 @@ export default function Inbox() {
   const [members, setMembers] = useState<Member[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // ¿El usuario está pegado al fondo? Solo autoscrolleamos si es así (o al abrir
+  // un chat). Evita que el refresco cada 5s le arrastre hacia abajo al leer arriba.
+  const atBottomRef = useRef(true);
+  const forceBottomRef = useRef(true);
+
+  const onMessagesScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    atBottomRef.current = distanceFromBottom < 80;
+  }, []);
 
   const loadList = useCallback(async () => {
     try {
@@ -160,7 +181,9 @@ export default function Inbox() {
         `/api/inbox/conversations/${id}`,
       );
       setConv(data.conversation);
-      setMessages(data.messages);
+      // Solo reemplazamos si de verdad cambió: así el refresco periódico no crea
+      // un array nuevo que dispare el autoscroll ni parpadeos innecesarios.
+      setMessages((prev) => (sameMessages(prev, data.messages) ? prev : data.messages));
       setAnalysis(data.conversation.ai_analysis ?? null);
       setNotesDraft(data.conversation.notes ?? "");
     } catch (e) {
@@ -188,10 +211,20 @@ export default function Inbox() {
   }, [selectedId, loadConv]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    const el = scrollRef.current;
+    if (!el) return;
+    // Al abrir un chat (forceBottom) siempre bajamos; en refrescos, solo si el
+    // usuario ya estaba al fondo. Si está leyendo arriba, no le movemos.
+    if (forceBottomRef.current || atBottomRef.current) {
+      el.scrollTo({ top: el.scrollHeight });
+      forceBottomRef.current = false;
+      atBottomRef.current = true;
+    }
   }, [messages]);
 
   function selectConv(id: string) {
+    forceBottomRef.current = true;
+    atBottomRef.current = true;
     setSelectedId(id);
     setNotesOpen(false);
     setError(null);
@@ -513,7 +546,7 @@ export default function Inbox() {
               </div>
             )}
 
-            <div className={styles.messages} ref={scrollRef}>
+            <div className={styles.messages} ref={scrollRef} onScroll={onMessagesScroll}>
               {messages.map((m, i) => {
                 const fromUs = m.role !== "contact";
                 const prev = messages[i - 1];

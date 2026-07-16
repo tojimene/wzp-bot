@@ -268,24 +268,81 @@ export class InboxService {
 
     const { data: existing } = await this.supabase.admin
       .from('messages')
-      .select('metadata')
+      .select('id, role, content, metadata')
       .eq('conversation_id', convId);
+
+    // IDs de proveedor ya guardados: no se reimportan.
     const seen = new Set(
       (existing ?? [])
         .map((m) => (m.metadata as { message_id?: string } | null)?.message_id)
-        .filter(Boolean),
+        .filter(Boolean) as string[],
     );
 
-    const rows = msgs
-      .filter((m) => m.id && !seen.has(m.id) && (m.text ?? '').trim().length > 0)
-      .map((m) => ({
+    // Mensajes que YA guardamos al enviar/recibir pero sin `message_id`
+    // (los salientes del bot se persisten con metadata vacía). Los reconciliamos
+    // con el eco de Unipile en lugar de duplicarlos. Clave: lado + contenido.
+    const unreconciled = new Map<
+      string,
+      { id: string; meta: Record<string, unknown> }[]
+    >();
+    for (const m of existing ?? []) {
+      const meta = (m.metadata as Record<string, unknown> | null) ?? {};
+      if (meta.message_id) continue;
+      const role = m.role as string;
+      const side =
+        role === 'contact' ? 'in' : role === 'assistant' || role === 'agent' ? 'out' : null;
+      if (!side) continue;
+      const key = `${side}::${String(m.content ?? '').trim()}`;
+      const arr = unreconciled.get(key) ?? [];
+      arr.push({ id: m.id as string, meta });
+      unreconciled.set(key, arr);
+    }
+
+    const rows: Array<{
+      conversation_id: string;
+      organization_id: string;
+      role: 'assistant' | 'contact';
+      content: string;
+      created_at: string;
+      metadata: Record<string, unknown>;
+    }> = [];
+    const backfills: { id: string; metadata: Record<string, unknown> }[] = [];
+
+    for (const m of msgs) {
+      const id = m.id ? String(m.id) : '';
+      const text = (m.text ?? '').trim();
+      if (!id || !text || seen.has(id)) continue;
+
+      const key = `${isFromUs(m) ? 'out' : 'in'}::${text}`;
+      const pool = unreconciled.get(key);
+      if (pool && pool.length > 0) {
+        // Ya lo teníamos guardado sin id: rellenamos el message_id y NO duplicamos.
+        const row = pool.shift()!;
+        backfills.push({
+          id: row.id,
+          metadata: { ...row.meta, message_id: id, reconciled: true },
+        });
+        seen.add(id);
+        continue;
+      }
+
+      rows.push({
         conversation_id: convId,
         organization_id: orgId,
         role: isFromUs(m) ? ('assistant' as const) : ('contact' as const),
-        content: (m.text ?? '').trim(),
+        content: text,
         created_at: timestampOf(m),
-        metadata: { message_id: m.id, imported: true },
-      }));
+        metadata: { message_id: id, imported: true },
+      });
+    }
+
+    // Backfill de message_id en filas existentes (evita duplicados en futuros syncs).
+    for (const b of backfills) {
+      await this.supabase.admin
+        .from('messages')
+        .update({ metadata: b.metadata })
+        .eq('id', b.id);
+    }
 
     if (rows.length === 0) return 0;
 
