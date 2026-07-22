@@ -7,7 +7,15 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
-import { IsBoolean, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  IsUrl,
+  IsUUID,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthContext } from '../auth/auth.types';
@@ -17,7 +25,15 @@ class UpdateIntegrationDto {
   @IsOptional() @IsString() @MaxLength(300) manychat_api_key?: string;
   @IsOptional() @IsUUID() default_channel_id?: string;
   @IsOptional() @IsBoolean() proactive_enabled?: boolean;
-  @IsOptional() @IsString() @MaxLength(500) ghl_webhook_url?: string;
+  // URL de salida a la que el backend hace POST: exigimos https y validamos el
+  // host contra SSRF en el servicio (ver assertSafeWebhookUrl). Cadena vacía = borrar.
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  // Solo validamos formato de URL cuando NO es cadena vacía (vacío = borrar).
+  @ValidateIf((o) => typeof o.ghl_webhook_url === 'string' && o.ghl_webhook_url.trim() !== '')
+  @IsUrl({ protocols: ['https'], require_protocol: true }, { message: 'La URL del webhook debe usar https' })
+  ghl_webhook_url?: string;
 }
 
 @Controller('integrations')

@@ -30,7 +30,22 @@ export async function updateSession(request: NextRequest) {
   );
 
   // IMPORTANTE: no metas lógica entre createServerClient y getUser().
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // Defensa en profundidad: bloqueamos el acceso a rutas privadas (/dashboard)
+  // ANTES de renderizar ningún Server Component si no hay sesión válida. El
+  // layout también lo comprueba, pero cortar aquí reduce la superficie y evita
+  // fugas de UI/redirects tardíos. (getUser valida el JWT en el servidor.)
+  const path = request.nextUrl.pathname;
+  const isProtected = path === "/dashboard" || path.startsWith("/dashboard/");
+  if (!user && isProtected) {
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = "/login";
+    loginUrl.search = "";
+    return NextResponse.redirect(loginUrl);
+  }
 
   return supabaseResponse;
 }

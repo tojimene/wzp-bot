@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   Post,
@@ -35,6 +36,10 @@ export class TeamController {
 
   @Get('members')
   list(@CurrentUser() user: AuthContext) {
+    // El roster (emails/nombres del equipo) es material de gestión: solo admins.
+    if (user.role !== 'admin') {
+      throw new ForbiddenException('Solo un administrador puede ver el equipo');
+    }
     return this.team.listMembers(user.organizationId);
   }
 

@@ -146,8 +146,13 @@ export class LeadsService {
     if (filters.status) query = query.eq('status', filters.status);
     if (filters.source) query = query.eq('source', filters.source);
     if (filters.search) {
-      const s = filters.search.replace(/[%,]/g, ' ').trim();
-      query = query.or(`name.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%`);
+      // Escapamos los caracteres reservados de la gramática de filtros de
+      // PostgREST (`,`, `%`, `(`, `)`, `.`, `"`, `*`, `\`) para que el término de
+      // búsqueda no pueda alterar la consulta `.or()` (inyección de filtro).
+      const s = filters.search.replace(/[%,()."\\*]/g, ' ').trim();
+      if (s) {
+        query = query.or(`name.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%`);
+      }
     }
 
     const { data, error } = await query;

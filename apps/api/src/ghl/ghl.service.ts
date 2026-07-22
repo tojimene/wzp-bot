@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { safeWebhookUrlOrNull } from '../common/url-safety';
 
 /** Datos para el webhook de salida "lead registrado" hacia GHL (paso 2). */
 export type PushLeadInput = {
@@ -61,8 +62,10 @@ export class GhlService {
         .select('ghl_webhook_url')
         .eq('organization_id', input.orgId)
         .maybeSingle();
-      const url = (integ?.ghl_webhook_url as string | null)?.trim();
-      if (!url) return; // esta org no tiene salida a GHL configurada
+      // Revalidamos anti-SSRF antes de hacer la petición (defensa en profundidad:
+      // el valor pudo guardarse antes de añadir la validación o corromperse).
+      const url = safeWebhookUrlOrNull((integ?.ghl_webhook_url as string | null)?.trim());
+      if (!url) return; // sin salida configurada o URL no permitida
 
       const { data: existing } = await this.supabase.admin
         .from('outbound_events')
@@ -91,6 +94,9 @@ export class GhlService {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(payload),
+          // No seguir redirecciones: evita saltarse la validación anti-SSRF con
+          // un 30x que apunte a un host interno.
+          redirect: 'error',
           signal: AbortSignal.timeout(10_000),
         });
         response.http_status = res.status;

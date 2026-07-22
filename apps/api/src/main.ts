@@ -56,11 +56,20 @@ export async function createNestApp() {
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
+  const isProd = (config.get<string>('NODE_ENV') ?? process.env.NODE_ENV) === 'production';
+  // En desarrollo el web puede correr en cualquier puerto (3000/3002/…), así que
+  // permitimos cualquier localhost. En producción, SOLO la allowlist.
+  const localhostRe = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
   app.enableCors({
-    origin: origins,
+    origin: (origin, cb) => {
+      // Sin Origin (curl, healthchecks, server-to-server) o en la allowlist.
+      if (!origin || origins.includes(origin)) return cb(null, true);
+      if (!isProd && localhostRe.test(origin)) return cb(null, true);
+      return cb(null, false); // no autorizado: no se emite Access-Control-Allow-Origin
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'X-Org-Id'],
     maxAge: 86400,
   });
 

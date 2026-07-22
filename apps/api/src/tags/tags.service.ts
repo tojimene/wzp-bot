@@ -130,10 +130,12 @@ export class TagsService {
     userId: string | null,
   ): Promise<AppliedTag[]> {
     await this.assertTagOwned(orgId, tagId);
+    await this.assertConversationOwned(orgId, conversationId);
     // Si un humano la vuelve a poner, deja de estar "suprimida" para la IA.
     await this.supabase.admin
       .from('conversation_tag_removals')
       .delete()
+      .eq('organization_id', orgId)
       .eq('conversation_id', conversationId)
       .eq('tag_id', tagId);
 
@@ -148,6 +150,8 @@ export class TagsService {
     tagId: string,
     userId: string | null,
   ): Promise<AppliedTag[]> {
+    await this.assertTagOwned(orgId, tagId);
+    await this.assertConversationOwned(orgId, conversationId);
     await this.supabase.admin
       .from('conversation_tags')
       .delete()
@@ -249,5 +253,16 @@ export class TagsService {
       .eq('organization_id', orgId)
       .maybeSingle();
     if (!data) throw new NotFoundException('Etiqueta no encontrada');
+  }
+
+  /** Seguridad (IDOR): confirma que la conversación pertenece a la organización. */
+  private async assertConversationOwned(orgId: string, conversationId: string): Promise<void> {
+    const { data } = await this.supabase.admin
+      .from('conversations')
+      .select('id')
+      .eq('id', conversationId)
+      .eq('organization_id', orgId)
+      .maybeSingle();
+    if (!data) throw new NotFoundException('Conversación no encontrada');
   }
 }

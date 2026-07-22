@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MessagingService } from '../messaging/messaging.service';
 import { WorkflowsService, type WorkflowRow } from './workflows.service';
@@ -65,6 +65,17 @@ export class WorkflowEngineService {
   /** Inscribe explícitamente una conversación en un workflow concreto (manual). */
   async enrollById(orgId: string, workflowId: string, conversationId: string): Promise<boolean> {
     const wf = await this.workflows.get(orgId, workflowId);
+    // Seguridad (IDOR): el `conversationId` viene del cliente. Confirmamos que la
+    // conversación pertenece a la MISMA organización antes de inscribirla.
+    const { data: conv } = await this.supabase.admin
+      .from('conversations')
+      .select('id')
+      .eq('id', conversationId)
+      .eq('organization_id', orgId)
+      .maybeSingle();
+    if (!conv) {
+      throw new NotFoundException('Conversación no encontrada');
+    }
     return this.enroll(wf, conversationId);
   }
 

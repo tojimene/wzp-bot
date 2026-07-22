@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase/supabase.service';
 import { CryptoService } from '../common/crypto.service';
+import { assertSafeWebhookUrl } from '../common/url-safety';
 
 const COLS =
   'organization_id, intake_token, manychat_api_key, default_channel_id, proactive_enabled, ghl_webhook_url';
@@ -64,9 +65,10 @@ export class IntegrationsService {
     if (patch.default_channel_id !== undefined) update.default_channel_id = patch.default_channel_id;
     if (typeof patch.proactive_enabled === 'boolean') update.proactive_enabled = patch.proactive_enabled;
     // URL del Inbound Webhook de GHL (destino de salida). Cadena vacía = borrar.
+    // Validación anti-SSRF: exigimos https y bloqueamos hosts internos.
     if (typeof patch.ghl_webhook_url === 'string') {
       const v = patch.ghl_webhook_url.trim();
-      update.ghl_webhook_url = v || null;
+      update.ghl_webhook_url = v ? assertSafeWebhookUrl(v) : null;
     }
 
     const { data, error } = await this.supabase.admin

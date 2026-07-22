@@ -131,9 +131,16 @@ export default function ChannelsManager({
   useEffect(() => {
     if (!cloudConfigured) return;
 
+    // Orígenes EXACTOS de Meta (endsWith permitiría "evil-facebook.com").
+    const ALLOWED_FB_ORIGINS = new Set([
+      "https://www.facebook.com",
+      "https://web.facebook.com",
+      "https://business.facebook.com",
+    ]);
+
     // Captura phone_number_id + waba_id que Meta envía por postMessage.
     const onMessage = (event: MessageEvent) => {
-      if (!event.origin.endsWith("facebook.com")) return;
+      if (!ALLOWED_FB_ORIGINS.has(event.origin)) return;
       try {
         const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
         if (data?.type === "WA_EMBEDDED_SIGNUP" && data?.event === "FINISH") {
