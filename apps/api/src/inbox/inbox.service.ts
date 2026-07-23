@@ -1,5 +1,11 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { SetterConfigService } from '../setter/setter-config.service';
 import {
   UnipileService,
   type UnipileAttendee,
@@ -32,6 +38,7 @@ export class InboxService {
     private readonly messaging: MessagingService,
     private readonly capi: ConversionsApiService,
     private readonly tags: TagsService,
+    private readonly setterConfig: SetterConfigService,
   ) {}
 
   async list(orgId: string, stage?: string, archived = false) {
@@ -239,6 +246,91 @@ export class InboxService {
   async sendAgentMessage(orgId: string, id: string, content: string) {
     await this.assertOwned(orgId, id);
     return this.messaging.sendAgentMessage(orgId, id, content);
+  }
+
+  /**
+   * Convierte una conversación real en un "ejemplo ganador" del setter: arma el
+   * transcript (Lead / Setter) y lo AÑADE a `winning_examples` para que el bot
+   * aprenda de ella (few-shot en el prompt). No sobreescribe lo que ya había.
+   */
+  async promoteToExample(orgId: string, id: string) {
+    const conv = await this.assertOwned(orgId, id);
+
+    // Refrescamos historial desde Unipile por si falta algún mensaje reciente.
+    if (conv.unipile_chat_id) {
+      try {
+        await this.importMessages(
+          orgId,
+          id,
+          conv.unipile_chat_id as string,
+          MAX_MESSAGES,
+        );
+      } catch (err) {
+        this.logger.warn(`No se pudo refrescar historial: ${String(err)}`);
+      }
+    }
+
+    const { data: messages } = await this.supabase.admin
+      .from('messages')
+      .select('role, content, created_at')
+      .eq('conversation_id', id)
+      .order('created_at', { ascending: true });
+
+    const transcript = buildTranscript(messages ?? []);
+    if (transcript.turns < 2) {
+      throw new BadRequestException(
+        'La conversación no tiene suficientes mensajes para usarla como ejemplo.',
+      );
+    }
+
+    const date = new Date().toISOString().slice(0, 10);
+    const header = `===== CONVERSACIÓN: ${conv.contact_name || 'Lead'} (${date}) =====`;
+    const block = `${header}\n${transcript.text}`;
+
+    const current = await this.setterConfig.getOrCreate(orgId);
+    const combined = current.winning_examples
+      ? `${current.winning_examples}\n\n${block}`
+      : block;
+    const winning_examples = combined.slice(0, 58000);
+    await this.setterConfig.update(orgId, { winning_examples });
+
+    return {
+      ok: true,
+      turns: transcript.turns,
+      addedChars: block.length,
+      totalChars: winning_examples.length,
+      truncated: combined.length > winning_examples.length,
+    };
+  }
+
+  /** Devuelve el transcript en texto plano (Lead / Setter) de una conversación. */
+  async exportTranscript(orgId: string, id: string) {
+    const conv = await this.assertOwned(orgId, id);
+    if (conv.unipile_chat_id) {
+      try {
+        await this.importMessages(
+          orgId,
+          id,
+          conv.unipile_chat_id as string,
+          MAX_MESSAGES,
+        );
+      } catch (err) {
+        this.logger.warn(`No se pudo refrescar historial: ${String(err)}`);
+      }
+    }
+    const { data: messages } = await this.supabase.admin
+      .from('messages')
+      .select('role, content, created_at')
+      .eq('conversation_id', id)
+      .order('created_at', { ascending: true });
+    const transcript = buildTranscript(messages ?? []);
+    const date = new Date().toISOString().slice(0, 10);
+    const md = `# Conversación con ${conv.contact_name || 'Lead'}\n\n_${conv.contact_handle ?? ''} · ${date}_\n\n${transcript.text}\n`;
+    return {
+      filename: `conversacion-${(conv.contact_name || 'lead').replace(/[^\w-]+/g, '_')}-${date}.md`,
+      content: md,
+      turns: transcript.turns,
+    };
   }
 
   /**
@@ -497,6 +589,27 @@ export class InboxService {
       };
     });
   }
+}
+
+/**
+ * Convierte la lista de mensajes de una conversación en un transcript de texto
+ * plano con etiquetas `Lead:` / `Setter:`. Ignora mensajes de sistema y vacíos.
+ */
+function buildTranscript(
+  messages: Array<{ role?: string | null; content?: string | null }>,
+): { text: string; turns: number } {
+  const lines: string[] = [];
+  for (const m of messages) {
+    const role = String(m.role ?? '');
+    const text = String(m.content ?? '').trim();
+    if (!text) continue;
+    let who: string | null = null;
+    if (role === 'contact') who = 'Lead';
+    else if (role === 'assistant' || role === 'agent') who = 'Setter';
+    if (!who) continue;
+    lines.push(`${who}: ${text}`);
+  }
+  return { text: lines.join('\n'), turns: lines.length };
 }
 
 /**

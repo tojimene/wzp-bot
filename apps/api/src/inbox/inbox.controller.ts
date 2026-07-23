@@ -108,6 +108,18 @@ export class InboxController {
     return this.analysis.analyze(user.organizationId, id);
   }
 
+  /** Añade esta conversación a los "ejemplos ganadores" del setter (entrenamiento). */
+  @Post('conversations/:id/promote-example')
+  promoteExample(@CurrentUser() user: AuthContext, @Param('id') id: string) {
+    return this.inbox.promoteToExample(user.organizationId, id);
+  }
+
+  /** Descarga la conversación como transcript (.md) para revisarla o subirla. */
+  @Get('conversations/:id/export')
+  export(@CurrentUser() user: AuthContext, @Param('id') id: string) {
+    return this.inbox.exportTranscript(user.organizationId, id);
+  }
+
   @Delete('conversations/:id')
   remove(@CurrentUser() user: AuthContext, @Param('id') id: string) {
     return this.inbox.remove(user.organizationId, id);

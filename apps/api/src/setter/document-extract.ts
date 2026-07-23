@@ -40,7 +40,13 @@ export async function extractTextFromFile(file: {
     return value ?? '';
   }
 
-  if (name.endsWith('.txt') || mime.startsWith('text/')) {
+  if (
+    name.endsWith('.txt') ||
+    name.endsWith('.md') ||
+    name.endsWith('.markdown') ||
+    mime.startsWith('text/') ||
+    mime === 'text/markdown'
+  ) {
     return file.buffer.toString('utf8');
   }
 
@@ -51,6 +57,6 @@ export async function extractTextFromFile(file: {
   }
 
   throw new BadRequestException(
-    'Formato no soportado. Sube un PDF, un Word (.docx) o un .txt.',
+    'Formato no soportado. Sube un PDF, un Word (.docx), un .txt o un .md.',
   );
 }

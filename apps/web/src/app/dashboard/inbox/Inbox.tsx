@@ -160,6 +160,7 @@ export default function Inbox() {
   const [tagDefs, setTagDefs] = useState<TagDef[]>([]);
   const [tagMenuOpen, setTagMenuOpen] = useState(false);
   const [tagBusy, setTagBusy] = useState(false);
+  const [exampleBusy, setExampleBusy] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // ¿El usuario está pegado al fondo? Solo autoscrolleamos si es así (o al abrir
@@ -364,6 +365,58 @@ export default function Inbox() {
       setError(e instanceof Error ? e.message : "No se pudo analizar");
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function promoteExample() {
+    if (!conv) return;
+    if (
+      !confirm(
+        "¿Añadir esta conversación a los ejemplos del setter? El bot aprenderá de ella.",
+      )
+    )
+      return;
+    setExampleBusy(true);
+    setError(null);
+    setSyncInfo(null);
+    try {
+      const res = await apiFetch<{ turns: number; truncated?: boolean }>(
+        `/api/inbox/conversations/${conv.id}/promote-example`,
+        { method: "POST" },
+      );
+      setSyncInfo(
+        res.truncated
+          ? "Ejemplo añadido (se recortó por límite de tamaño)."
+          : `Ejemplo añadido (${res.turns} mensajes).`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo añadir el ejemplo");
+    } finally {
+      setExampleBusy(false);
+    }
+  }
+
+  async function downloadTranscript() {
+    if (!conv) return;
+    setExampleBusy(true);
+    setError(null);
+    try {
+      const res = await apiFetch<{ filename: string; content: string }>(
+        `/api/inbox/conversations/${conv.id}/export`,
+      );
+      const blob = new Blob([res.content], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = res.filename || "conversacion.md";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo descargar");
+    } finally {
+      setExampleBusy(false);
     }
   }
 
@@ -605,6 +658,22 @@ export default function Inbox() {
                 onClick={toggleBlock}
               >
                 {conv.blocked ? "Desbloquear" : "Bloquear"}
+              </button>
+              <button
+                className={styles.toolBtn}
+                onClick={promoteExample}
+                disabled={exampleBusy}
+                title="Añadir esta conversación a los ejemplos del setter"
+              >
+                Usar como ejemplo
+              </button>
+              <button
+                className={styles.toolBtn}
+                onClick={downloadTranscript}
+                disabled={exampleBusy}
+                title="Descargar la conversación en Markdown"
+              >
+                Descargar
               </button>
               <button className={`${styles.toolBtn} ${styles.toolDanger}`} onClick={remove}>
                 Eliminar

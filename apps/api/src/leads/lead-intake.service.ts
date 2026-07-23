@@ -119,18 +119,15 @@ export class LeadIntakeService {
     // Sin datos de contacto no podemos abrir conversación, pero el lead ya quedó
     // registrado en el CRM para que el usuario lo vea y lo trabaje a mano.
     if (provider === 'whatsapp' && !phoneDigits && !input.external_id) {
+      await this.warnIfGhlOutboundSkipped(orgId, 'el lead no trae teléfono');
       return { conversationId: null, leadId, proactiveSent: false, reason: 'lead sin teléfono' };
     }
 
+    // El canal (WhatsApp) puede NO estar conectado todavía: la conexión suele ser
+    // el ÚLTIMO paso del onboarding. Aun así abrimos la conversación (channel_id
+    // admite null) para tener un `setter_id` estable y enlazar con GHL desde ya.
+    // El envío real de mensajes se activará cuando exista canal.
     const channel = await this.pickChannel(orgId, org.default_channel_id, provider);
-    if (!channel) {
-      return {
-        conversationId: null,
-        leadId,
-        proactiveSent: false,
-        reason: `sin canal de ${provider} conectado`,
-      };
-    }
 
     // Buscamos conversación existente por teléfono/subscriber para no duplicar.
     const conv = await this.findOrCreateConversation(orgId, channel, provider, phoneDigits, input);
@@ -169,6 +166,18 @@ export class LeadIntakeService {
       } catch (err) {
         this.logger.warn(`No se pudo guardar el contexto del lead: ${String(err)}`);
       }
+    }
+
+    // A partir de aquí necesitamos un canal conectado para escribir al lead. Si no
+    // lo hay, ya cumplimos lo importante (lead en CRM + setter_id enviado a GHL);
+    // el primer mensaje saldrá cuando se conecte WhatsApp.
+    if (!channel) {
+      return {
+        conversationId: conv.id,
+        leadId,
+        proactiveSent: false,
+        reason: `sin canal de ${provider} conectado (lead y enlace GHL OK; falta conectar canal para escribir)`,
+      };
     }
 
     const wantsProactive = (input.proactive ?? true) && org.proactive_enabled;
@@ -244,9 +253,45 @@ export class LeadIntakeService {
     };
   }
 
+  /**
+   * Si la org tiene configurado el webhook de salida a GHL pero el intake se
+   * corta antes de poder enviarlo (sin canal / sin teléfono), lo dejamos claro
+   * en los logs. Así es fácil diagnosticar "GHL no recibe el setter_id".
+   */
+  private async warnIfGhlOutboundSkipped(orgId: string, why: string): Promise<void> {
+    try {
+      const { data } = await this.supabase.admin
+        .from('integrations')
+        .select('ghl_webhook_url')
+        .eq('organization_id', orgId)
+        .maybeSingle();
+      if (data?.ghl_webhook_url) {
+        this.logger.warn(
+          `[GHL salida OMITIDA] org ${orgId}: ${why}. El lead se registró en el CRM, ` +
+            `pero NO se envió el webhook "lead_registered" con el setter_id a GHL.`,
+        );
+      }
+    } catch {
+      /* best-effort: nunca rompe el intake */
+    }
+  }
+
+  /** Si la conversación existía sin canal y ahora hay uno, la vincula. */
+  private async attachChannelIfMissing(
+    conv: { id: string; channel_id?: string | null },
+    channel: { id: string } | null,
+  ): Promise<void> {
+    if (channel && !conv.channel_id) {
+      await this.supabase.admin
+        .from('conversations')
+        .update({ channel_id: channel.id })
+        .eq('id', conv.id);
+    }
+  }
+
   private async findOrCreateConversation(
     orgId: string,
-    channel: { id: string; provider: string },
+    channel: { id: string; provider: string } | null,
     provider: string,
     phoneDigits: string | null,
     input: IntakeInput,
@@ -262,26 +307,32 @@ export class LeadIntakeService {
     if (input.external_id) {
       const { data } = await this.supabase.admin
         .from('conversations')
-        .select('id, proactive_sent, unipile_chat_id, contact_external_id')
+        .select('id, proactive_sent, unipile_chat_id, contact_external_id, channel_id')
         .eq('organization_id', orgId)
         .eq('external_subscriber_id', input.external_id)
         .eq('is_test', false)
         .maybeSingle();
-      if (data) return data;
+      if (data) {
+        await this.attachChannelIfMissing(data, channel);
+        return data;
+      }
     }
 
-    // 2) Por teléfono (handle) en el mismo canal.
+    // 2) Por teléfono (handle) dentro de la org y proveedor. No restringimos por
+    // channel_id para reencontrar conversaciones creadas ANTES de conectar el
+    // canal (channel_id = null) y así re-vincularlas cuando el canal aparece.
     if (handle) {
       const { data } = await this.supabase.admin
         .from('conversations')
-        .select('id, proactive_sent, unipile_chat_id, contact_external_id')
+        .select('id, proactive_sent, unipile_chat_id, contact_external_id, channel_id')
         .eq('organization_id', orgId)
-        .eq('channel_id', channel.id)
+        .eq('provider', provider)
         .eq('contact_handle', handle)
         .eq('is_test', false)
         .maybeSingle();
       if (data) {
-        // Actualizamos origen/consentimiento por si llega más info.
+        // Actualizamos origen/consentimiento por si llega más info y, si la
+        // conversación no tenía canal, la vinculamos al que ahora sí existe.
         await this.supabase.admin
           .from('conversations')
           .update({
@@ -289,6 +340,7 @@ export class LeadIntakeService {
             source_detail: input.source_detail ?? null,
             campaign: input.campaign ?? null,
             ...(input.ghl_contact_id ? { ghl_contact_id: input.ghl_contact_id } : {}),
+            ...(channel && !data.channel_id ? { channel_id: channel.id } : {}),
             consent_optin: true,
             mode: 'setter',
             ai_enabled: true,
@@ -302,7 +354,7 @@ export class LeadIntakeService {
       .from('conversations')
       .insert({
         organization_id: orgId,
-        channel_id: channel.id,
+        channel_id: channel?.id ?? null,
         provider,
         contact_name: input.name ?? 'Lead',
         contact_handle: handle,
