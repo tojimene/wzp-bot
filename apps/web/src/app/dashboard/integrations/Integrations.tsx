@@ -105,8 +105,15 @@ export default function Integrations() {
         </p>
 
         <UrlRow
-          label="GoHighLevel · Cita agendada"
-          hint="Workflow → trigger “Appointment (Booked/Cancelled)” → acción “Webhook (Outbound)” (POST). Incluye el campo setter_id para enlazarlo. Al recibirlo, se pausan los seguimientos."
+          label="① Registrar leads en el CRM (GoHighLevel, Zapier, Make, tu formulario)"
+          hint="ESTA es la URL para que un lead ENTRE al CRM. Un único webhook para todos. POST con JSON. Detecta automáticamente GoHighLevel (first_name, customData, contact_id) y marca la fuente. En GHL: Workflow (trigger de nuevo lead) → acción “Webhook (Outbound)” (POST) a esta URL."
+          url={data.urls.lead_intake}
+          copied={copied === "generic"}
+          onCopy={() => copy(data.urls.lead_intake, "generic")}
+        />
+        <UrlRow
+          label="② GoHighLevel · Cita agendada/cancelada (NO usar para registrar leads)"
+          hint="SOLO para eventos de cita. Workflow → trigger “Appointment (Booked/Cancelled)” → acción “Webhook (Outbound)” (POST). Incluye el campo setter_id para enlazarlo. Al recibirlo, se pausan los seguimientos. Si registras leads aquí por error, NO aparecerán en el CRM."
           url={data.urls.ghl_appointment}
           copied={copied === "ghl_appt"}
           onCopy={() => copy(data.urls.ghl_appointment, "ghl_appt")}
@@ -117,13 +124,6 @@ export default function Integrations() {
           url={data.urls.manychat_dynamic}
           copied={copied === "mc"}
           onCopy={() => copy(data.urls.manychat_dynamic, "mc")}
-        />
-        <UrlRow
-          label="Entrada de leads (GoHighLevel, Zapier, Make, tu formulario)"
-          hint="Un único webhook para todos. POST con JSON. Detecta automáticamente GoHighLevel (first_name, customData, contact_id) y marca la fuente. En GHL: Workflow → “Webhook (Outbound)” (POST)."
-          url={data.urls.lead_intake}
-          copied={copied === "generic"}
-          onCopy={() => copy(data.urls.lead_intake, "generic")}
         />
 
         <div className={styles.tokenRow}>

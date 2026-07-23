@@ -174,6 +174,27 @@ export class GhlService {
     const meetUrl =
       str(body.meeting_url ?? appt.meeting_url ?? appt.address ?? appt.location) || null;
 
+    // Salvaguarda anti "URL equivocada": este endpoint es SOLO para eventos de
+    // cita. Si el payload no trae ninguna señal de cita (fecha/hora, id de cita,
+    // objeto appointment/calendar) y no es una cancelación explícita, casi seguro
+    // es un webhook de REGISTRO DE LEAD enviado por error a esta URL. No creamos
+    // una cita fantasma: avisamos claramente para que se corrija la config en GHL.
+    const hasAppointmentSignal =
+      Boolean(startAt) ||
+      Boolean(endAt) ||
+      Boolean(eventId) ||
+      Boolean(meetUrl) ||
+      body.appointment != null ||
+      body.calendar != null;
+    if (action !== 'cancelled' && !hasAppointmentSignal) {
+      this.logger.warn(
+        `Webhook recibido en /webhooks/ghl/appointment SIN datos de cita (org ${orgId}). ` +
+          `Parece un registro de lead enviado a la URL equivocada: usa la URL de ` +
+          `"Entrada de leads" (/api/leads/intake?token=...) para registrar leads en el CRM.`,
+      );
+      return { ok: true, matched: false, action: 'ignored_not_appointment' };
+    }
+
     const conv = await this.findConversation(orgId, keys);
 
     if (action === 'cancelled') {
